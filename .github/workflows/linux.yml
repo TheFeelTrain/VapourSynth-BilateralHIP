@@ -9,13 +9,14 @@ on:
       - 'sycl_source/*'
       - '.github/workflows/linux.yml'
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   build-linux:
     runs-on: ubuntu-24.04
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v3
+      uses: actions/checkout@v6
       with:
         fetch-depth: 0
 
@@ -90,8 +91,17 @@ jobs:
       run: cmake --install build_sycl --prefix install
 
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: BilateralGPU-Linux
         path: install/lib/*.so
 
+  build-wheel:
+    name: Package Wheel (Linux)
+    needs: build-linux
+    uses: ./.github/workflows/wheel.yml
+    with:
+      os: ubuntu-24.04
+      artifact_name: BilateralGPU-Linux
+      artifact_path: install/lib
+      build_sdist: false
