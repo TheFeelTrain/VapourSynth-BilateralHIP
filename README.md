@@ -1,5 +1,5 @@
 # VapourSynth-BilateralHIP
-Copyright© 2021 WolframRhodium
+Copyright© 2021 WolframRhodium<br>
 Copyright© 2026 TheFeelTrain
 
 Bilateral filter in HIP for VapourSynth. 
@@ -22,7 +22,7 @@ sample type: 8-16 bit integer or 32 bit float Gray/YUV/RGB input
 ## Usage
 
 ```python
-core.{bilateralgpu, bilateralgpu_rtc}.Bilateral(clip clip, float[] sigma_spatial=3.0, float[] sigma_color=0.02, int[] radius=0, int device_id=0, int num_streams=4, bool use_shared_memory=True)
+core.bilateralhip.Bilateral(clip clip, float[] sigma_spatial=3.0, float[] sigma_color=0.02, int[] radius=0, int device_id=0, int num_streams=4, bool use_shared_memory=True)
 ```
 
 - clip:
@@ -41,17 +41,13 @@ core.{bilateralgpu, bilateralgpu_rtc}.Bilateral(clip clip, float[] sigma_spatial
     Kernel window size. 0 = automatic calculatation based on "sigma_spatial".
 
 - device_id: (Default: 0)
-    CUDA device ID.
+    HIP device ID.
 
 - num_streams: (Default: 4)
-    Number of CUDA streams, enables concurrent kernel execution and data transfer.
+    Number of HIP streams, enables concurrent kernel execution and data transfer.
 
 - use_shared_memory: (Default: True)
     Use on-chip memory to reduce bandwidth requirements on memory operations.
-
-- The `_rtc` version has two experimental parameters:
-    - block_x, block_y: (Default: 16, 8)
-        Block size of launch configuration of the kernel. Don't modify it unless you know what you are doing.
 
 ## Manual Compilation
 ```bash
