@@ -89,7 +89,7 @@ struct Resource {
 
     constexpr auto deleter_(T x) noexcept {
         if (x) {
-            deleter(x);
+            (void)deleter(x);
         }
     }
 
@@ -299,7 +299,7 @@ static void VS_CC BilateralFree(
     }
     vsapi->freeNode(d->node);
 
-    hipSetDevice(d->device_id);
+    (void)hipSetDevice(d->device_id);
 
     delete d;
 }
