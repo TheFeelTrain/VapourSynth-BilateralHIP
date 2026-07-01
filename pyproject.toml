@@ -3,17 +3,16 @@ requires = ["hatchling>=1.29.0", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vapoursynth-bilateralgpu"
+name = "vapoursynth-bilateralhip"
 dynamic = ["version"]
 description = "Bilateral filter for VapourSynth"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-authors = [{ name = "WolframRhodium" }]
+authors = [{ name = "TheFeelTrain" }]
 maintainers = [
-    { name = "WolframRhodium" },
-    { name = "Vardë", email = "ichunjo.le.terrible@gmail.com" },
+    { name = "TheFeelTrain", email = "the@feeltra.in" }
 ]
 dependencies = ["vapoursynth>=74"]
 
@@ -21,15 +20,15 @@ dependencies = ["vapoursynth>=74"]
 dev = ["hatchling>=1.27.0", "packaging"]
 
 [project.urls]
-"Source Code" = "https://github.com/WolframRhodium/VapourSynth-BilateralGPU"
-"Bug Tracker" = "https://github.com/WolframRhodium/VapourSynth-BilateralGPU/issues"
+"Source Code" = "https://github.com/TheFeelTrain/VapourSynth-BilateralHIP"
+"Bug Tracker" = "https://github.com/TheFeelTrain/VapourSynth-BilateralHIP/issues"
 
 [tool.hatch.version]
 source = "vcs"
 tag-pattern = '^r(?P<version>.*)$'
 
 [tool.hatch.build.targets.sdist]
-include = ["rtc_source", "source", "sycl_source", "config.h.in", "CMakeLists.txt"]
+include = ["source", "CMakeLists.txt"]
 
 [tool.hatch.build.targets.wheel]
 include = ["vapoursynth/plugins"]

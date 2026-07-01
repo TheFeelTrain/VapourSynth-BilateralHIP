@@ -1,7 +1,8 @@
-# VapourSynth-BilateralGPU
+# VapourSynth-BilateralHIP
 Copyright© 2021 WolframRhodium
+Copyright© 2026 TheFeelTrain
 
-Bilateral filter in CUDA for VapourSynth.
+Bilateral filter in HIP for VapourSynth. 
 
 ## Description
 [Bilateral filter](https://en.wikipedia.org/wiki/Bilateral_filter) is a non-linear, edge-preserving and noise-reducing smoothing filter for images.
@@ -11,15 +12,8 @@ The intensity value at each pixel in an image is replaced by a weighted average 
 Special thanks to [Kice](https://github.com/kice) for doing most of the work in previous implementation.
 
 ## Requirements
-- CPU with AVX2 support.
 
-- CUDA-enabled GPU(s) of [compute capability](https://developer.nvidia.com/cuda-gpus) 5.0 or higher (Maxwell+).
-
-- GPU driver >= v452.39 for GeForce or `bilateral_rtc` users or >= v496.13 in general.
-
-The plugin can run on older generation of GPUs or CPU without AVX2 support by manual compilation.
-
-The `_rtc` version requires compute capability 3.5 or higher, GPU driver 465 or newer and has dependencies on `nvrtc64_112_0.dll/libnvrtc.so.11.2` and `nvrtc-builtins64_114.dll/libnvrtc-builtins.so.11.4.50`.
+- GPU(s) supported by HIP/ROCm
 
 ## Supported Formats
 
@@ -59,9 +53,11 @@ core.{bilateralgpu, bilateralgpu_rtc}.Bilateral(clip clip, float[] sigma_spatial
     - block_x, block_y: (Default: 16, 8)
         Block size of launch configuration of the kernel. Don't modify it unless you know what you are doing.
 
-## Compilation
+## Manual Compilation
 ```bash
-cmake -S . -B build -D CMAKE_BUILD_TYPE=Release -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math -Wno-deprecated-gpu-targets" -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
+CMAKE_PREFIX_PATH=/opt/rocm \
+CXX=/opt/rocm/llvm/bin/clang++ \
+cmake -S . -B build -D CMAKE_BUILD_TYPE=Release
 
 cmake --build build --config Release
 ```
