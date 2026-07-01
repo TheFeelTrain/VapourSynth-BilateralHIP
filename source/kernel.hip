@@ -1,11 +1,10 @@
 #include <iterator>
-
-#include <cuda_pipeline_primitives.h>
+#include <hip/hip_runtime.h>
 
 #define BLOCK_X 16
 #define BLOCK_Y 8
 
-cudaGraphExec_t get_graphexec(
+hipGraphExec_t get_graphexec(
     float * d_dst, float * d_src, float * h_buffer,
     int width, int height, int stride,
     float sigma_spatial, float sigma_color, int radius,
@@ -33,11 +32,7 @@ static void bilateral(
             int sy = min(max(cy - static_cast<int>(threadIdx.y) - radius + y, 0), height - 1);
             for (int cx = threadIdx.x; cx < 2 * radius + BLOCK_X; cx += BLOCK_X) {
                 int sx = min(max(cx - static_cast<int>(threadIdx.x) - radius + x, 0), width - 1);
-                __pipeline_memcpy_async(
-                    &buffer[cy * (2 * radius + BLOCK_X) + cx],
-                    &src[sy * stride + sx],
-                    4
-                );
+                buffer[cy * (2 * radius + BLOCK_X) + cx] = src[sy * stride + sx];
             }
         }
 
@@ -46,17 +41,11 @@ static void bilateral(
                 int sy = min(max(cy - static_cast<int>(threadIdx.y) - radius + y, 0), height - 1);
                 for (int cx = threadIdx.x; cx < 2 * radius + BLOCK_X; cx += BLOCK_X) {
                     int sx = min(max(cx - static_cast<int>(threadIdx.x) - radius + x, 0), width - 1);
-                    __pipeline_memcpy_async(
-                        &buffer[(2 * radius + BLOCK_Y + cy) * (2 * radius + BLOCK_X) + cx],
-                        &src[(height + sy) * stride + sx],
-                        4
-                    );
+                    buffer[(2 * radius + BLOCK_Y + cy) * (2 * radius + BLOCK_X) + cx] = src[(height + sy) * stride + sx];
                 }
             }
         }
 
-        __pipeline_commit();
-        __pipeline_wait_prior(0);
         __syncthreads();
 
         if (x >= width || y >= height)
@@ -65,7 +54,7 @@ static void bilateral(
         const float center = buffer[
             (has_ref * (2 * radius + BLOCK_Y) + radius + threadIdx.y) * (2 * radius + BLOCK_X) +
             radius + threadIdx.x
-        ]; // src[(has_ref * height + y) * stride + x];
+        ];
 
         for (int cy = -radius; cy <= radius; ++cy) {
             int sy = cy + radius + threadIdx.y;
@@ -116,7 +105,7 @@ static void bilateral(
     dst[y * stride + x] = num / den;
 }
 
-cudaGraphExec_t get_graphexec(
+hipGraphExec_t get_graphexec(
     float * d_dst, float * d_src, float * h_buffer,
     int width, int height, int stride,
     float sigma_spatial_scaled, float sigma_color_scaled, int radius,
@@ -125,26 +114,26 @@ cudaGraphExec_t get_graphexec(
 
     size_t pitch { stride * sizeof(float) };
 
-    cudaGraph_t graph;
-    cudaGraphCreate(&graph, 0);
+    hipGraph_t graph;
+    hipGraphCreate(&graph, 0);
 
-    cudaGraphNode_t n_HtoD;
+    hipGraphNode_t n_HtoD;
     {
-        cudaMemcpy3DParms copy_params {};
-        copy_params.srcPtr = make_cudaPitchedPtr(
+        hipMemcpy3DParms copy_params {};
+        copy_params.srcPtr = make_hipPitchedPtr(
             h_buffer, pitch, width, height * (1 + has_ref));
-        copy_params.dstPtr = make_cudaPitchedPtr(
+        copy_params.dstPtr = make_hipPitchedPtr(
             d_src, pitch, width, height * (1 + has_ref));
-        copy_params.extent = make_cudaExtent(
+        copy_params.extent = make_hipExtent(
             width * sizeof(float), height * (1 + has_ref), 1);
-        copy_params.kind = cudaMemcpyHostToDevice;
+        copy_params.kind = hipMemcpyHostToDevice;
 
-        cudaGraphAddMemcpyNode(&n_HtoD, graph, nullptr, 0, &copy_params);
+        hipGraphAddMemcpyNode(&n_HtoD, graph, nullptr, 0, &copy_params);
     }
 
-    cudaGraphNode_t n_kernel;
+    hipGraphNode_t n_kernel;
     {
-        cudaGraphNode_t dependencies[] { n_HtoD };
+        hipGraphNode_t dependencies[] { n_HtoD };
 
         void * kernelArgs[] {
             &d_dst, &d_src,
@@ -152,7 +141,7 @@ cudaGraphExec_t get_graphexec(
             &sigma_spatial_scaled, &sigma_color_scaled, &radius
         };
 
-        cudaKernelNodeParams kernel_params {};
+        hipKernelNodeParams kernel_params {};
 
         auto sharedMemBytes = static_cast<unsigned int>(
             (1 + has_ref) * (2 * radius + BLOCK_Y) * (2 * radius + BLOCK_X) * sizeof(float));
@@ -177,36 +166,35 @@ cudaGraphExec_t get_graphexec(
         kernel_params.sharedMemBytes = useSharedMem ? sharedMemBytes : 0;
         kernel_params.kernelParams = kernelArgs;
 
-        cudaGraphAddKernelNode(
+        hipGraphAddKernelNode(
             &n_kernel, graph,
             dependencies, std::size(dependencies),
             &kernel_params);
     }
 
-    cudaGraphNode_t n_DtoH;
+    hipGraphNode_t n_DtoH;
     {
-        cudaGraphNode_t dependencies[] { n_kernel };
+        hipGraphNode_t dependencies[] { n_kernel };
 
-        cudaMemcpy3DParms copy_params {};
-        copy_params.srcPtr = make_cudaPitchedPtr(
+        hipMemcpy3DParms copy_params {};
+        copy_params.srcPtr = make_hipPitchedPtr(
             d_dst, pitch, width, height);
-        copy_params.dstPtr = make_cudaPitchedPtr(
+        copy_params.dstPtr = make_hipPitchedPtr(
             h_buffer, pitch, width, height);
-        copy_params.extent = make_cudaExtent(
+        copy_params.extent = make_hipExtent(
             width * sizeof(float), height, 1);
-        copy_params.kind = cudaMemcpyDeviceToHost;
+        copy_params.kind = hipMemcpyDeviceToHost;
 
-        cudaGraphAddMemcpyNode(
+        hipGraphAddMemcpyNode(
             &n_DtoH, graph,
             dependencies, std::size(dependencies),
             &copy_params);
     }
 
-    cudaGraphExec_t graphexecp;
-    cudaGraphInstantiate(&graphexecp, graph, nullptr, nullptr, 0);
+    hipGraphExec_t graphexecp;
+    hipGraphInstantiate(&graphexecp, graph, nullptr, nullptr, 0);
 
-    cudaGraphDestroy(graph);
+    hipGraphDestroy(graph);
 
     return graphexecp;
 }
-

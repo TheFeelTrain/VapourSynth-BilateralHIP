@@ -1,12 +1,8 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 
-project(VapourSynth-BilateralGPU LANGUAGES CXX)
+project(VapourSynth-BilateralHIP LANGUAGES CXX HIP)
 
-set(ENABLE_CUDA ON CACHE BOOL "Enable CUDA backend")
-set(ENABLE_CUDA_RTC ON CACHE BOOL "Enable CUDA NVRTC backend")
-set(USE_NVRTC_STATIC ON CACHE BOOL "Whether to use NVRTC static library")
-
-set(ENABLE_SYCL OFF CACHE BOOL "Enable SYCL backend")
+find_package(hip REQUIRED)
 
 set(VAPOURSYNTH_INCLUDE_DIRECTORY "" CACHE PATH "Path to VapourSynth headers")
 
@@ -26,7 +22,6 @@ if(NOT VAPOURSYNTH_INCLUDE_DIRECTORY)
     endif()
 endif()
 
-
 find_package(Git QUIET)
 if(GIT_FOUND)
     execute_process(
@@ -39,26 +34,47 @@ if(GIT_FOUND)
     endif()
 endif()
 
-
 if(VCS_TAG)
-    message(STATUS "VapourSynth-BilateralGPU ${VCS_TAG}")
+    message(STATUS "VapourSynth-BilateralHIP ${VCS_TAG}")
 else()
     message(WARNING "unknown plugin version")
     set(VCS_TAG "unknown")
 endif()
 
-configure_file(config.h.in config.h)
+configure_file(source/config.h.in config.h)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
-if(ENABLE_CUDA)
-    add_subdirectory(source)
-endif() # ENABLE_CUDA
+add_library(bilateralhip_kernel OBJECT source/kernel.hip)
 
-if(ENABLE_CUDA_RTC)
-    add_subdirectory(rtc_source)
-endif() # ENABLE_CUDA_RTC
+set_target_properties(bilateralhip_kernel PROPERTIES
+    HIP_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+    HIP_STANDARD 17
+    HIP_STANDARD_REQUIRED ON)
 
-if(ENABLE_SYCL)
-    add_subdirectory(sycl_source)
-endif() # ENABLE_CUDA_RTC
+add_library(bilateralhip_source OBJECT source/bilateral.cpp)
+
+target_include_directories(bilateralhip_source PRIVATE
+    ${VAPOURSYNTH_INCLUDE_DIRECTORY})
+
+target_link_libraries(bilateralhip_source PRIVATE hip::host)
+
+set_target_properties(bilateralhip_source PROPERTIES
+    CXX_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON)
+
+add_library(bilateralhip SHARED)
+target_link_libraries(bilateralhip bilateralhip_source bilateralhip_kernel hip::host)
+
+if(WIN32)
+    install(TARGETS bilateralhip RUNTIME)
+elseif(DEFINED VS_INSTALL_DIR)
+    install(TARGETS bilateralhip LIBRARY DESTINATION ${VS_INSTALL_DIR})
+else()
+    install(TARGETS bilateralhip
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()

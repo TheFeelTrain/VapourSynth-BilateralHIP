@@ -12,11 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include <cuda_runtime.h>
-
-#ifdef __AVX2__
-#include <immintrin.h>
-#endif
+#include <hip/hip_runtime.h>
 
 #include <VapourSynth.h>
 #include <VSHelper.h>
@@ -25,16 +21,16 @@
 
 using namespace std::string_literals;
 
-extern cudaGraphExec_t get_graphexec(
+extern hipGraphExec_t get_graphexec(
     float * d_dst, float * d_src, float * h_buffer,
     int width, int height, int stride,
     float sigma_spatial_scaled, float sigma_color_scaled, int radius,
     bool use_shared_memory, bool has_ref);
 
 #define checkError(expr) do {                                                               \
-    cudaError_t __err = expr;                                                               \
-    if (__err != cudaSuccess) {                                                             \
-        return set_error("'"s + # expr + "' failed: " + cudaGetErrorString(__err));         \
+    hipError_t __err = expr;                                                                \
+    if (__err != hipSuccess) {                                                              \
+        return set_error("'"s + # expr + "' failed: " + hipGetErrorString(__err));          \
     }                                                                                       \
 } while(0)
 
@@ -108,12 +104,12 @@ struct Resource {
     }
 };
 
-struct CUDA_Resource {
-    Resource<float *, cudaFree> d_src;
-    Resource<float *, cudaFree> d_dst;
-    Resource<float *, cudaFreeHost> h_buffer;
-    Resource<cudaStream_t, cudaStreamDestroy> stream;
-    std::array<Resource<cudaGraphExec_t, cudaGraphExecDestroy>, 3> graphexecs;
+struct HIP_Resource {
+    Resource<float *, hipFree> d_src;
+    Resource<float *, hipFree> d_dst;
+    Resource<float *, hipHostFree> h_buffer;
+    Resource<hipStream_t, hipStreamDestroy> stream;
+    std::array<Resource<hipGraphExec_t, hipGraphExecDestroy>, 3> graphexecs;
 };
 
 struct BilateralData {
@@ -121,16 +117,12 @@ struct BilateralData {
     VSNodeRef * ref_node;
     const VSVideoInfo * vi;
 
-    // stored in graphexec
-    // float sigma_spatial[3], sigma_color[3];
-    // int radius[3];
-
     int device_id, num_streams;
     bool process[3] { true, true, true };
 
     int d_pitch;
     ticket_semaphore semaphore;
-    std::vector<CUDA_Resource> resources;
+    std::vector<HIP_Resource> resources;
     std::mutex resources_lock;
 };
 
@@ -190,7 +182,7 @@ static const VSFrameRef *VS_CC BilateralGetFrame(
         };
 
         float * h_buffer = resource.h_buffer;
-        cudaStream_t stream = resource.stream;
+        hipStream_t stream = resource.stream;
         const auto & graphexecs = resource.graphexecs;
 
         for (int plane = 0; plane < d->vi->format->numPlanes; plane++) {
@@ -224,22 +216,9 @@ static const VSFrameRef *VS_CC BilateralGetFrame(
 
                 const auto load = [width, height, &h_bufferp, s_stride, d_stride](const uint16_t * srcp) {
                     for (int y = 0; y < height; ++y) {
-#ifdef __AVX2__
-                        // VideoFrame is at least 32 bytes padded
-                        for (int x = 0; x < width; x += 8) {
-                            __m128i src = _mm_load_si128(
-                                reinterpret_cast<const __m128i *>(&srcp[x]));
-                            __m256 srcf = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(src));
-                            srcf = _mm256_mul_ps(srcf,
-                                _mm256_set1_ps(static_cast<float>(1.0 / 65535.0)));
-                            _mm256_stream_ps(&h_bufferp[x], srcf);
-                        }
-#else
                         for (int x = 0; x < width; ++x) {
                             h_bufferp[x] = static_cast<float>(srcp[x]) / 65535.0f;
                         }
-#endif
-
                         h_bufferp += d_stride;
                         srcp += s_stride;
                     }
@@ -254,33 +233,9 @@ static const VSFrameRef *VS_CC BilateralGetFrame(
 
                 const auto load = [width, height, &h_bufferp, s_stride, d_stride](const uint8_t * srcp) {
                     for (int y = 0; y < height; ++y) {
-#ifdef __AVX2__
-                    // VideoFrame is at least 32 bytes padded
-                        for (int x = 0; x < width; x += 16) {
-                            __m128i src = _mm_load_si128(
-                                reinterpret_cast<const __m128i *>(&srcp[x]));
-                            __m256 srcf_lo = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(src));
-                            srcf_lo = _mm256_mul_ps(
-                                srcf_lo,
-                                _mm256_set1_ps(static_cast<float>(1.0 / 255.0)));
-                            _mm256_stream_ps(&h_bufferp[x], srcf_lo);
-
-                            __m256 srcf_hi = _mm256_cvtepi32_ps(
-                                _mm256_cvtepu8_epi32(
-                                    _mm_castps_si128(
-                                        _mm_permute_ps(
-                                            _mm_castsi128_ps(src),
-                                            0b01'00'11'10))));
-                            srcf_hi = _mm256_mul_ps(srcf_hi,
-                                _mm256_set1_ps(static_cast<float>(1.0 / 255.0)));
-                            _mm256_stream_ps(&h_bufferp[x + 8], srcf_hi);
-                        }
-#else
                         for (int x = 0; x < width; ++x) {
                             h_bufferp[x] = static_cast<float>(srcp[x]) / 255.f;
                         }
-#endif
-
                         h_bufferp += d_stride;
                         srcp += s_stride;
                     }
@@ -292,8 +247,8 @@ static const VSFrameRef *VS_CC BilateralGetFrame(
                 }
             }
 
-            checkError(cudaGraphLaunch(graphexecs[plane], stream));
-            checkError(cudaStreamSynchronize(stream));
+            checkError(hipGraphLaunch(graphexecs[plane], stream));
+            checkError(hipStreamSynchronize(stream));
 
             auto dstp = vsapi->getWritePtr(dst, plane);
 
@@ -304,30 +259,10 @@ static const VSFrameRef *VS_CC BilateralGetFrame(
                 const float * h_bufferp = h_buffer;
 
                 for (int y = 0; y < height; ++y) {
-#ifdef __AVX2__
-                    // VideoFrame is at least 32 bytes padded
-                    for (int x = 0; x < width; x += 8) {
-                        __m256 dstf = _mm256_load_ps(&h_bufferp[x]);
-                        dstf = _mm256_mul_ps(dstf, _mm256_set1_ps(65535.0f));
-                        // dstf = _mm256_max_ps(dstf, _mm256_set1_ps(0.f));
-                        // dstf = _mm256_min_ps(dstf, _mm256_set1_ps(65535.0f));
-                        dstf = _mm256_round_ps(dstf,
-                            _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
-                        __m256i dsti32 = _mm256_cvtps_epi32(dstf);
-                        __m128i dstu16 = _mm_packus_epi32(
-                            _mm256_castsi256_si128(dsti32),
-                            _mm256_extractf128_si256(dsti32, 1)
-                        );
-                        _mm_stream_si128(reinterpret_cast<__m128i *>(&dst16p[x]), dstu16);
-                    }
-#else
                     for (int x = 0; x < width; ++x) {
                         float dstf = h_bufferp[x] * 65535.0f;
-                        // dstf = std::clamp(dstf, 0.0f, 65535.0f);
                         dst16p[x] = static_cast<uint16_t>(std::roundf(dstf));
                     }
-#endif
-
                     dst16p += s_stride;
                     h_bufferp += d_stride;
                 }
@@ -336,32 +271,10 @@ static const VSFrameRef *VS_CC BilateralGetFrame(
                 const float * h_bufferp = h_buffer;
 
                 for (int y = 0; y < height; ++y) {
-#ifdef __AVX2__
-                    for (int x = 0; x < width; x += 8) {
-                        __m256 dstf = _mm256_load_ps(&h_bufferp[x]);
-                        dstf = _mm256_mul_ps(dstf, _mm256_set1_ps(255.0f));
-                        // dstf = _mm256_max_ps(dstf, _mm256_set1_ps(0.f));
-                        // dstf = _mm256_min_ps(dstf, _mm256_set1_ps(255.0f));
-                        dstf = _mm256_round_ps(dstf,
-                            _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
-                        __m256i dsti32 = _mm256_cvtps_epi32(dstf);
-                        __m128i dstu16 = _mm_packus_epi16(
-                            _mm256_castsi256_si128(dsti32),
-                            _mm256_extractf128_si256(dsti32, 1)
-                        );
-                        __m128i dstu8 = _mm_shuffle_epi8(dstu16, _mm_setr_epi8(
-                            0, 2, 4, 6, 8, 10, 12, 14,
-                            -1, -1, -1, -1, -1, -1, -1, -1));
-                        *reinterpret_cast<long long *>(&dst8p[x]) = _mm_cvtsi128_si64(dstu8);
-                    }
-#else
                     for (int x = 0; x < width; ++x) {
                         float dstf = h_bufferp[x] * 255.0f;
-                        // dstf = std::min(std::max(0.f, dstf), 255.0f);
                         dst8p[x] = static_cast<uint8_t>(std::roundf(dstf));
                     }
-#endif
-
                     dst8p += s_stride;
                     h_bufferp += d_stride;
                 }
@@ -394,7 +307,7 @@ static void VS_CC BilateralFree(
     }
     vsapi->freeNode(d->node);
 
-    cudaSetDevice(d->device_id);
+    hipSetDevice(d->device_id);
 
     delete d;
 }
@@ -510,9 +423,9 @@ static void VS_CC BilateralCreate(
     }
 
     int device_count;
-    checkError(cudaGetDeviceCount(&device_count));
+    checkError(hipGetDeviceCount(&device_count));
     if (0 <= device_id && device_id < device_count) {
-        checkError(cudaSetDevice(device_id));
+        checkError(hipSetDevice(device_id));
     } else {
         return set_error("invalid device ID (" + std::to_string(device_id) + ")");
     }
@@ -542,26 +455,26 @@ static void VS_CC BilateralCreate(
         int max_height { d->process[0] ? height : height >> ssh };
 
         for (int i = 0; i < d->num_streams; ++i) {
-            Resource<float *, cudaFree> d_src {};
+            Resource<float *, hipFree> d_src {};
             if (i == 0) {
                 size_t d_pitch;
-                checkError(cudaMallocPitch(
+                checkError(hipMallocPitch(
                     &d_src.data, &d_pitch, max_width * sizeof(float), (1 + has_ref) * max_height));
                 d->d_pitch = static_cast<int>(d_pitch);
             } else {
-                checkError(cudaMalloc(&d_src.data, (1 + has_ref) * max_height * d->d_pitch));
+                checkError(hipMalloc(&d_src.data, (1 + has_ref) * max_height * d->d_pitch));
             }
 
-            Resource<float *, cudaFree> d_dst {};
-            checkError(cudaMalloc(&d_dst.data, max_height * d->d_pitch));
+            Resource<float *, hipFree> d_dst {};
+            checkError(hipMalloc(&d_dst.data, max_height * d->d_pitch));
 
-            Resource<float *, cudaFreeHost> h_buffer {};
-            checkError(cudaMallocHost(&h_buffer.data, (1 + has_ref) * max_height * d->d_pitch));
+            Resource<float *, hipHostFree> h_buffer {};
+            checkError(hipHostMalloc(&h_buffer.data, (1 + has_ref) * max_height * d->d_pitch));
 
-            Resource<cudaStream_t, cudaStreamDestroy> stream {};
-            checkError(cudaStreamCreateWithFlags(&stream.data, cudaStreamNonBlocking));
+            Resource<hipStream_t, hipStreamDestroy> stream {};
+            checkError(hipStreamCreateWithFlags(&stream.data, hipStreamNonBlocking));
 
-            std::array<Resource<cudaGraphExec_t, cudaGraphExecDestroy>, 3> graphexecs {};
+            std::array<Resource<hipGraphExec_t, hipGraphExecDestroy>, 3> graphexecs {};
             for (int plane = 0; plane < d->vi->format->numPlanes; ++plane) {
                 if (!d->process[plane]) {
                     continue;
@@ -578,7 +491,7 @@ static void VS_CC BilateralCreate(
                 );
             }
 
-            d->resources.push_back(CUDA_Resource{
+            d->resources.push_back(HIP_Resource{
                 .d_src = std::move(d_src),
                 .d_dst = std::move(d_dst),
                 .h_buffer = std::move(h_buffer),
@@ -598,7 +511,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
     VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
 
     configFunc(
-        "com.wolframrhodium.bilateralgpu", "bilateralgpu", "Bilateral filter using CUDA",
+        "com.thefeeltrain.bilateralhip", "bilateralhip", "Bilateral filter using HIP",
         VAPOURSYNTH_API_VERSION, 1, plugin);
 
     registerFunc("Bilateral",
