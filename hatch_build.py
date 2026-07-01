@@ -13,7 +13,7 @@ class CustomHook(BuildHookInterface[Any]):
     else:
         source_dir = Path("install/lib")
 
-    target_dir = Path("vapoursynth/plugins/bilateralgpu")
+    target_dir = Path("vapoursynth/plugins/bilateralhip")
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         build_data["pure_python"] = False
