@@ -530,10 +530,4 @@ VapourSynthPluginInit2(VSPlugin *plugin, const VSPLUGINAPI *vspapi) {
         "clip:vnode;",
         BilateralCreate, nullptr, plugin
     );
-
-    auto getVersion = [](const VSMap *, VSMap *out, void *, VSCore *,const VSAPI *vsapi) {
-        vsapi->mapSetData(out, "version", VERSION, -1, dtUtf8, maReplace);
-    };
-
-    vspapi->registerFunction("Version", "", "any", getVersion, nullptr, plugin);
 }
