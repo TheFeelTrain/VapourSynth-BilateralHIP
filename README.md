@@ -22,7 +22,7 @@ sample type: 8-16 bit integer or 32 bit float Gray/YUV/RGB input
 ## Usage
 
 ```python
-core.bilateralhip.Bilateral(clip clip, float[] sigma_spatial=3.0, float[] sigma_color=0.02, int[] radius=0, int device_id=0, int num_streams=4, bool use_shared_memory=True)
+core.{bilateralhip, bilateralhip_rtc}.Bilateral(clip clip, float[] sigma_spatial=3.0, float[] sigma_color=0.02, int[] radius=0, int device_id=0, int num_streams=4, bool use_shared_memory=True)
 ```
 
 - clip:
@@ -50,10 +50,29 @@ core.bilateralhip.Bilateral(clip clip, float[] sigma_spatial=3.0, float[] sigma_
     Use on-chip memory to reduce bandwidth requirements on memory operations.
 
 ## Manual Compilation
+
+Build both plugins (default):
 ```bash
 CMAKE_PREFIX_PATH=/opt/rocm \
 CXX=/opt/rocm/llvm/bin/clang++ \
 cmake -S . -B build -D CMAKE_BUILD_TYPE=Release
 
 cmake --build build --config Release
+```
+
+### Build options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `ENABLE_HIP` | `ON` | Build the standard (AOT-compiled) HIP plugin |
+| `ENABLE_RTC` | `ON` | Build the RTC (JIT-compiled) plugin |
+
+Examples:
+
+```bash
+# Build only the non-RTC plugin
+cmake -S . -B build -D ENABLE_RTC=OFF
+
+# Build only the RTC plugin
+cmake -S . -B build -D ENABLE_HIP=OFF
 ```
